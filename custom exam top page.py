@@ -1,4 +1,3 @@
-# === Imports ===
 import os
 import random
 import string
@@ -6,43 +5,42 @@ import shutil
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
-
+from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 import streamlit as st
 
-# === Config Defaults ===
-DEFAULT_SCHOOL_NAME = "ST. JOSEPH’S BOYS - KITALE"
+# === Config ===
+SCHOOL_NAME = "ST. JOSEPH’S BOYS - KITALE"
 EXAM_HEADER = "Kenya Certificate of Secondary Examinations"
 
-DEFAULT_INSTRUCTIONS = [
-    "1. Write your name and admission number clearly.",
-    "2. Answer all questions.",
-    "3. No mobile phones or unauthorized materials allowed.",
-    "4. Follow invigilator instructions."
-]
+SUBJECT_INSTRUCTIONS = {
+    "Default": [
+        "1. Write your name and admission number clearly.",
+        "2. Answer all questions.",
+        "3. No mobile phones or unauthorized materials allowed.",
+        "4. Follow invigilator instructions."
+    ]
+}
 
-# === Helper Functions ===
 def generate_exam_number(length=10):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
-def generate_exam_pdf(student_name, adm_no, stream, form, subject, term, exam_name, exam_date, duration, logo_image, instructions, include_marking_table, include_exam_number, school_name):
+def generate_exam_pdf(student_name, adm_no, stream, form, subject, term, exam_name, exam_date, duration, logo_image, instructions, include_marking_table, include_exam_number):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
     y = height - 80
 
-    # Load logo image if provided
     if logo_image:
-        logo_bytes = logo_image.read()
-        logo = ImageReader(BytesIO(logo_bytes))
+        logo = ImageReader(logo_image)
         c.drawImage(logo, 60, y - 10, width=60, height=60, preserveAspectRatio=True)
 
     c.setFont("Helvetica-Bold", 14)
     c.drawCentredString(width / 2, y, EXAM_HEADER)
 
     c.setFont("Helvetica-Bold", 13)
-    c.drawCentredString(width / 2, y - 20, school_name.upper())
+    c.drawCentredString(width / 2, y - 20, SCHOOL_NAME)
     c.drawCentredString(width / 2, y - 40, f"{form.upper()} {subject.upper()}")
     c.drawCentredString(width / 2, y - 60, f"{term} – {exam_name}")
     c.drawCentredString(width / 2, y - 80, f"{exam_date} - {duration}")
@@ -98,15 +96,9 @@ def generate_exam_pdf(student_name, adm_no, stream, form, subject, term, exam_na
 # === Streamlit UI ===
 st.title("Student Customized Exam Top Page Generator")
 
-school_name = st.text_input("School Name", value=DEFAULT_SCHOOL_NAME)
-input_mode = st.radio("How would you like to enter student data?", ["Upload Excel File", "Enter Manually"])
-
-if input_mode == "Upload Excel File":
-    student_file = st.file_uploader("Upload Excel File with Student Data", type=["xlsx"])
-else:
-    student_list = st.text_area("Enter students (Name, Admission No, Stream) one per line", placeholder="e.g.\nJohn Doe, 12345, North\nJane Smith, 67890, South")
-
+student_file = st.file_uploader("Upload Excel File with Student Data", type=["xlsx"])
 logo_file = st.file_uploader("Upload School Logo (optional)", type=["png", "jpg", "jpeg"])
+
 subject = st.text_input("Subject", placeholder="e.g. Physics")
 form = st.selectbox("Form", ["Form 1", "Form 2", "Form 3", "Form 4"])
 term = st.text_input("Term", placeholder="e.g. Term 2")
@@ -118,62 +110,53 @@ include_exam_number = st.checkbox("Include Exam Number", value=True)
 include_marking_table = st.checkbox("Include Marking Table", value=True)
 
 st.markdown("### Edit Instructions")
-instructions = st.text_area("Instructions", "\n".join(DEFAULT_INSTRUCTIONS), height=200)
+instructions = st.text_area("Instructions", "\n".join(SUBJECT_INSTRUCTIONS["Default"]), height=200)
 instruction_lines = [line.strip() for line in instructions.strip().split("\n") if line.strip()]
 
-# === Generate PDFs ===
 if st.button("Generate Personalized PDFs"):
-    with st.spinner("Generating PDFs..."):
-        output_folder = "student_exam_pdfs"
-        os.makedirs(output_folder, exist_ok=True)
-        students = []
-
-        if input_mode == "Upload Excel File":
-            if not student_file:
-                st.error("Please upload an Excel file with student data.")
-                st.stop()
+    if student_file is None:
+        st.error("Please upload an Excel file with student data.")
+    else:
+        with st.spinner("Generating PDFs..."):
             df = pd.read_excel(student_file)
-            df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
+            df.columns = [col.strip().lower() for col in df.columns]
+
             name_col = next((col for col in df.columns if "name" in col), None)
             adm_col = next((col for col in df.columns if "admission" in col), None)
             stream_col = next((col for col in df.columns if "stream" in col), None)
 
             if not all([name_col, adm_col, stream_col]):
-                st.error("Could not detect necessary columns (name, admission number, stream).")
-                st.stop()
+                st.error("Could not detect necessary columns (name, admission number, stream). Please check your Excel file.")
+            else:
+                output_folder = "student_exam_pdfs"
+                os.makedirs(output_folder, exist_ok=True)
 
-            students = list(zip(df[name_col], df[adm_col], df[stream_col]))
-        else:
-            for line in student_list.strip().splitlines():
-                parts = [x.strip() for x in line.split(",")]
-                if len(parts) == 3:
-                    students.append(tuple(parts))
-                else:
-                    st.warning(f"Ignored malformed line: {line}")
+                for _, row in df.iterrows():
+                    student_name = row.get(name_col, "Unknown")
+                    adm_no = row.get(adm_col, "N/A")
+                    stream = row.get(stream_col, "N/A")
 
-        for student_name, adm_no, stream in students:
-            pdf = generate_exam_pdf(
-                student_name,
-                adm_no,
-                stream,
-                form,
-                subject,
-                term,
-                exam_name,
-                exam_date.strftime("%d %B %Y"),
-                duration,
-                logo_file,
-                instruction_lines,
-                include_marking_table,
-                include_exam_number,
-                school_name
-            )
+                    pdf = generate_exam_pdf(
+                        student_name,
+                        adm_no,
+                        stream,
+                        form,
+                        subject,
+                        term,
+                        exam_name,
+                        exam_date.strftime("%d %B %Y"),
+                        duration,
+                        logo_file,
+                        instruction_lines,
+                        include_marking_table,
+                        include_exam_number
+                    )
 
-            safe_name = "".join(c if c.isalnum() or c in "_-" else "_" for c in student_name)
-            with open(os.path.join(output_folder, f"{safe_name}_{adm_no}.pdf"), "wb") as f:
-                f.write(pdf.read())
+                    safe_name = student_name.replace(" ", "_").replace("/", "_")
+                    with open(os.path.join(output_folder, f"{safe_name}_{adm_no}.pdf"), "wb") as f:
+                        f.write(pdf.read())
 
-        zip_path = shutil.make_archive("Personalized_Exam_Top_Pages", 'zip', output_folder)
-        st.success("Done! Download below:")
-        st.download_button("Download ZIP", open(zip_path, "rb"), "Personalized_Exam_Top_Pages.zip")
-        shutil.rmtree(output_folder)
+                zip_path = shutil.make_archive("Personalized_Exam_Top_Pages", 'zip', output_folder)
+                st.success("Done! Download below:")
+                st.download_button("Download ZIP", open(zip_path, "rb"), "Personalized_Exam_Top_Pages.zip")
+                shutil.rmtree(output_folder)
